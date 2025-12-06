@@ -1,89 +1,110 @@
-# Training Guide
+# Training Guide: Hierarchical Recursive Go Coder (HRGC)
 
-Complete guide for training the Go Coder LLM on AMD RX 6700 XT with ROCm.
+Complete guide for training the HRM-based Go Coder on AMD RX 6700 XT with ROCm.
 
 ## Overview
 
-Train a 125M parameter GPT-style model optimized for Go code understanding using PyTorch with ROCm on AMD GPU.
+Train a **20-30M parameter Hierarchical Recursive Model** optimized for Go code generation using PyTorch with ROCm on AMD GPU.
 
-**Target**: 10B tokens in 5-7 days on RX 6700 XT (12 GB VRAM)
+**Key Innovation**: Two-module architecture (Planner + Generator) with recursive refinement
 
-## Training Specifications
+**Target**: 4B tokens in 2-3 days on RX 6700 XT (**3x faster** than traditional approach!)
+
+**Memory**: Uses only 3-4 GB VRAM (**3x less** than GPT-2 125M)
+
+## HRM Training Specifications
 
 ### Model Configuration
 
 ```python
 # model/config.py
-from transformers import GPT2Config
+from model.config import HRMConfig
 
-config = GPT2Config(
-    vocab_size=50000,           # From tokenizer
-    n_positions=1024,           # Context length
-    n_embd=768,                 # Embedding dimension
-    n_layer=12,                 # Transformer layers
-    n_head=12,                  # Attention heads (n_embd // 64)
-    n_inner=3072,               # FFN dimension (4 * n_embd)
-    activation_function="gelu", # Activation
-    resid_pdrop=0.1,           # Residual dropout
-    embd_pdrop=0.1,            # Embedding dropout
-    attn_pdrop=0.1,            # Attention dropout
-    layer_norm_epsilon=1e-5,
-    initializer_range=0.02,
-    bos_token_id=1,
-    eos_token_id=2,
-    pad_token_id=3,
+config = HRMConfig()
+
+# Planning Module (High-level reasoning)
+config.planner_config = ModuleConfig(
+    vocab_size=50000,
+    n_positions=512,      # Plan length (shorter)
+    n_embd=256,           # Compact embedding
+    n_layer=3,            # Lightweight
+    n_head=8,
+    dropout=0.1,
 )
+# Parameters: ~10-12M
 
-# Total parameters: ~125 million
+# Generation Module (Low-level implementation)
+config.generator_config = ModuleConfig(
+    vocab_size=50000,
+    n_positions=1024,     # Code length
+    n_embd=256,           # Compact embedding
+    n_layer=3,            # Lightweight
+    n_head=8,
+    dropout=0.1,
+)
+# Parameters: ~10-12M
+
+# Recursive refinement
+config.max_refinement_iterations = 5
+config.enable_validation = True
+
+# Total parameters: ~20-30 million (6x smaller than GPT-2!)
 ```
 
-### Training Hyperparameters
+### HRM Training Hyperparameters
 
 ```python
 # model/train.py
-from transformers import TrainingArguments
+config = HRMConfig()
 
-training_args = TrainingArguments(
-    output_dir="checkpoints",
-    overwrite_output_dir=True,
+training_config = {
+    # Batch configuration (4x larger due to smaller model!)
+    "batch_size": 8,                    # Fits in 3-4 GB VRAM
+    "gradient_accumulation_steps": 4,   # Effective batch: 32
+    "eval_batch_size": 16,
 
-    # Batch configuration
-    per_device_train_batch_size=2,      # Fits in 12 GB VRAM
-    gradient_accumulation_steps=8,      # Effective batch: 16
-    per_device_eval_batch_size=4,
+    # Learning rates (different for each module)
+    "learning_rate": 3e-4,
+    "planner_lr": 3.6e-4,              # Planner trains slightly faster
+    "generator_lr": 2.4e-4,            # Generator more conservative
+    "refinement_lr": 3e-4,
+    "lr_scheduler_type": "cosine",
+    "warmup_steps": 1000,
+    "weight_decay": 0.1,
 
-    # Learning rate & schedule
-    learning_rate=5e-4,
-    lr_scheduler_type="cosine",
-    warmup_steps=2000,
-    weight_decay=0.1,
-
-    # Training duration
-    num_train_epochs=3,
-    max_steps=195000,                   # ~10B tokens
+    # Training duration (less data needed!)
+    "max_steps": 125000,               # ~4B tokens (vs 10B)
+    "num_train_epochs": 3,
 
     # Precision
-    fp16=True,                          # ROCm supports FP16
-    fp16_opt_level="O1",
+    "fp16": True,                      # ROCm supports FP16
 
     # Logging & evaluation
-    logging_steps=50,
-    eval_steps=500,
-    save_steps=1000,
-    save_total_limit=3,
+    "logging_steps": 50,
+    "eval_steps": 500,
+    "save_steps": 1000,
+    "save_total_limit": 3,
 
     # Optimization
-    adam_beta1=0.9,
-    adam_beta2=0.95,
-    adam_epsilon=1e-8,
-    max_grad_norm=1.0,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.95,
+    "max_grad_norm": 1.0,
 
-    # Misc
-    dataloader_num_workers=4,
-    dataloader_pin_memory=True,
-    report_to="tensorboard",
-    load_best_model_at_end=False,
-)
+    # HRM-specific
+    "refinement_warmup": 5000,         # Start refinement training later
+    "validation_frequency": 100,       # Run syntax checks every N steps
+    "max_refinement_iterations": 5,
+
+    # Multi-task loss weights
+    "plan_loss_weight": 0.4,
+    "code_loss_weight": 0.4,
+    "refinement_loss_weight": 0.2,
+
+    # Data loading
+    "dataloader_num_workers": 4,
+    "dataloader_pin_memory": True,
+    "report_to": "tensorboard",
+}
 ```
 
 ## Implementation
@@ -476,15 +497,17 @@ n_positions=512,  # Instead of 1024
 
 ## Performance Tuning
 
-### Expected Performance
+### Expected Performance: HRM vs GPT-2
 
-| Metric | Value |
-|--------|-------|
-| Throughput | ~5 tokens/sec |
-| Batch time | ~200 ms/step |
-| Epoch time | ~40-50 hours |
-| Total time | 5-7 days (3 epochs) |
-| VRAM usage | 10-11 GB |
+| Metric | HRM (20-30M) | GPT-2 (125M) | Improvement |
+|--------|--------------|--------------|-------------|
+| Throughput | ~15-20 tokens/sec | ~5 tokens/sec | **3-4x faster** |
+| Batch time | ~50-80 ms/step | ~200 ms/step | **2.5x faster** |
+| Batch size | 8 | 2 | **4x larger** |
+| Epoch time | ~15-20 hours | ~40-50 hours | **2.5x faster** |
+| Total time | 2-3 days | 5-7 days | **3x faster** |
+| VRAM usage | 3-4 GB | 10-11 GB | **3x less** |
+| Training tokens | 4B | 10B | **2.5x less data** |
 
 ### Optimization Tips
 
@@ -699,14 +722,20 @@ accelerate launch --config_file accelerate_config.yaml model/train.py
 - **Perplexity**: exp(val_loss), lower is better
 - **Validation Loss**: Should track training loss
 
-### Target Metrics
+### Target Metrics (HRM)
 
-| Checkpoint | Perplexity | Validation Loss |
-|------------|-----------|-----------------|
-| 10K steps  | ~50-100   | ~4.0-4.5        |
-| 50K steps  | ~20-40    | ~3.0-3.7        |
-| 100K steps | ~10-20    | ~2.3-3.0        |
-| 195K steps | ~8-15     | ~2.0-2.7        |
+| Checkpoint | Plan Acc | Code Acc | Refinement Acc | Avg Iterations |
+|------------|----------|----------|----------------|----------------|
+| 10K steps  | ~40-50%  | ~30-40%  | ~60%           | 3.5            |
+| 50K steps  | ~60-70%  | ~50-60%  | ~75%           | 2.8            |
+| 100K steps | ~75-85%  | ~65-75%  | ~85%           | 2.2            |
+| 125K steps | ~85-90%  | ~75-85%  | ~90%           | 1.8            |
+
+**Additional HRM Metrics**:
+- **Plan Accuracy**: Correct intent/target prediction
+- **Code Accuracy**: Exact match or AST similarity
+- **Refinement Accuracy**: Correct continue/refine/done decision
+- **Avg Iterations**: Average refinement loops (should decrease)
 
 ## Next Steps
 

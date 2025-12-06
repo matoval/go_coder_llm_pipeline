@@ -1,22 +1,26 @@
 # Architecture Overview
 
-System design and component architecture for the Go Coder LLM pipeline.
+System design and component architecture for the Hierarchical Recursive Go Coder (HRGC) pipeline.
 
 ## System Overview
 
+**Novel Approach**: This system uses Hierarchical Reasoning Modules (HRM) and Tree-based Recursive Modeling (TRM) to create a **tiny but highly accurate** code generation model specifically for Go.
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Go Coder LLM Pipeline                       │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│            Hierarchical Recursive Go Coder Pipeline                 │
+│         (HRM/TRM-based Recursive Reasoning Architecture)            │
+└─────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   GitHub     │───▶│  Tokenizer   │───▶│   Training   │───▶│  Deployment  │
-│   Fetcher    │    │   Training   │    │   (PyTorch)  │    │   (GGUF)     │
-│    (Go)      │    │ (SentencePiece)│   │   (ROCm)     │    │   (Ollama)   │
+│   GitHub     │───▶│  Hierarchical│───▶│  Recursive   │───▶│  Deployment  │
+│   Fetcher    │    │  Tokenizer   │    │  Training    │    │   (GGUF)     │
+│    (Go)      │    │ (Plan+Code)  │    │   (HRM)      │    │   (Ollama)   │
 └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
       │                    │                    │                    │
       ▼                    ▼                    ▼                    ▼
-  Raw JSONL          Corpus Text         Checkpoints           GGUF Model
+  Annotated          Planning+Code        Recursive Model       Tiny GGUF
+  PR Tasks           Vocabulary           (20-30M params)       (~80MB)
 ```
 
 ## Component Architecture
@@ -53,9 +57,9 @@ GitHub API → fetch.go → PRComment struct → prepare.go → corpus.txt
 - License filtering
 - Provenance tracking
 
-### 2. Tokenization Layer (Python + SentencePiece)
+### 2. Tokenization Layer (Python + SentencePiece + Hierarchical Extensions)
 
-**Purpose**: Train a BPE tokenizer that understands both Go code and natural language.
+**Purpose**: Train a BPE tokenizer that understands Go code, natural language, AND hierarchical reasoning structures.
 
 **Components**:
 
@@ -63,60 +67,106 @@ GitHub API → fetch.go → PRComment struct → prepare.go → corpus.txt
 tokenizer/
     ├── train_tokenizer.sh      # Training script
     ├── go_coder_llm.model      # Trained SentencePiece model
-    └── go_coder_llm.vocab      # Vocabulary (50K tokens)
+    ├── go_coder_llm.vocab      # Vocabulary (50K tokens)
+    └── plan_extractor.py       # Extracts high-level plans from PRs
 ```
 
 **Tokenizer Strategy**:
 - **Model Type**: BPE (Byte-Pair Encoding)
 - **Vocab Size**: 50,000 tokens
 - **Character Coverage**: 1.0 (full Unicode support)
-- **Special Tokens**: `<pad>`, `<unk>`, `<s>`, `</s>`, `<REPO>`, `<PR_TITLE>`, `<CODE>`, etc.
+- **Special Tokens** (Extended for HRM):
+  - Base: `<pad>`, `<unk>`, `<s>`, `</s>`
+  - Structural: `<REPO>`, `<PR_TITLE>`, `<CODE>`, `<CONTEXT>`
+  - **NEW - Planning**: `<PLAN>`, `<STEP>`, `</PLAN>`
+  - **NEW - Intents**: `<INTENT:FIX>`, `<INTENT:ADD>`, `<INTENT:REFACTOR>`, `<INTENT:OPTIMIZE>`
+  - **NEW - Targets**: `<TARGET:func>`, `<TARGET:type>`, `<TARGET:interface>`
+  - **NEW - Validation**: `<VALIDATE>`, `<SYNTAX_OK>`, `<TEST_PASS>`, `<REFINE>`
 
-**Why One Tokenizer**:
-- Simpler pipeline (single vocabulary)
-- No token-id mismatches
-- Efficient for mixed code + natural language
-- Modern tokenizers handle both well
+**Hierarchical Tokenization**:
+- **Plan Level**: High-level intents and structural changes
+- **Code Level**: Actual Go tokens and syntax
+- **Validation Level**: Feedback tokens for recursive refinement
 
-### 3. Training Layer (PyTorch + ROCm)
+**Why Extended Vocabulary**:
+- Enables explicit planning representation
+- Supports recursive refinement loops
+- Provides validation feedback signals
+- Maintains backward compatibility with code/NL
 
-**Purpose**: Train a GPT-style causal language model optimized for AMD GPUs.
+### 3. Training Layer (PyTorch + ROCm + HRM/TRM)
+
+**Purpose**: Train a hierarchical recursive reasoning model optimized for Go code generation.
+
+**Novel Architecture**: Inspired by HRM (arXiv:2506.21734) and TRM (arXiv:2510.04871)
 
 **Components**:
 
 ```
 model/
-    ├── train.py                # Training loop (Hugging Face Trainer)
-    ├── config.py               # Model configuration
+    ├── hrm_model.py            # Hierarchical reasoning architecture
+    ├── train.py                # Recursive training loop
+    ├── config.py               # HRM configuration
+    ├── validators.py           # Syntax/test validation hooks
     └── export_gguf.py          # GGUF export script
 
 checkpoints/                    # Training checkpoints
 logs/                          # Training logs and metrics
 ```
 
-**Model Architecture** (GPT-2 style):
+**Model Architecture** (Hierarchical Recursive):
 
 ```python
 {
-    "vocab_size": 50000,
-    "n_positions": 1024,        # Context length
-    "n_embd": 768,              # Embedding dimension
-    "n_layer": 12,              # Transformer blocks
-    "n_head": 12,               # Attention heads
+    # High-Level Planning Module (Abstract, Slow)
+    "planner": {
+        "vocab_size": 50000,
+        "n_positions": 512,     # Plan length
+        "n_embd": 256,          # Compact embedding
+        "n_layer": 3,           # Lightweight
+        "n_head": 8,
+        "params": "~10-12M"
+    },
+
+    # Low-Level Generation Module (Detailed, Fast)
+    "generator": {
+        "vocab_size": 50000,
+        "n_positions": 1024,    # Code length
+        "n_embd": 256,          # Compact embedding
+        "n_layer": 3,           # Lightweight
+        "n_head": 8,
+        "params": "~10-12M"
+    },
+
+    # Cross-Module Communication
+    "cross_attention": "256 dim",
+    "refinement_controller": "3-way classifier (continue/refine/done)",
+
+    # Recursive Loop
+    "max_refinement_iterations": 5,
+    "early_stopping": "validation-based"
 }
 ```
 
-**Parameters**: ~125 million
+**Total Parameters**: ~20-30 million (**6x smaller than GPT-2 125M!**)
 
 **Memory Layout** (RX 6700 XT - 12 GB VRAM):
 ```
-Model weights:        ~500 MB  (fp16)
-Optimizer states:     ~1 GB    (AdamW)
-Gradients:           ~500 MB
-Activations:         ~8-9 GB  (batch_size=2, seq_len=1024)
+Model weights:        ~80 MB   (fp16) - 6x smaller!
+Optimizer states:     ~320 MB  (AdamW)
+Gradients:           ~80 MB
+Activations:         ~2-3 GB  (batch_size=8, hierarchical)
+Validation overhead:  ~500 MB (syntax checker)
 ─────────────────────────────
-Total:               ~10-11 GB
+Total:               ~3-4 GB  ← MUCH more headroom!
 ```
+
+**Key Advantages**:
+- **6x parameter reduction**: 20-30M vs 125M params
+- **Recursive refinement**: Iteratively improves solutions
+- **Hierarchical reasoning**: Separates planning from implementation
+- **Validation-aware**: Built-in syntax/test checking
+- **Faster training**: Smaller model = faster convergence
 
 ### 4. Deployment Layer
 
@@ -150,21 +200,32 @@ type PRRecord struct {
 }
 ```
 
-### Text Serialization Format
+### Hierarchical Serialization Format
 
-Records are serialized for tokenizer training with special markers:
+Records are serialized with hierarchical planning structure for HRM training:
 
 ```
 <REPO> owner/project
 <PR_TITLE> Fix nil pointer in handler
 <PR_BODY> This fixes a panic when r == nil
-<FILES>
+
+<PLAN>
+<STEP> <INTENT:FIX> Identify nil pointer vulnerability in handler function
+<STEP> <TARGET:func> handle() in internal/server.go
+<STEP> <INTENT:ADD> Add defensive nil check at function entry point
+<STEP> Preserve existing process() logic
+</PLAN>
+
+<CONTEXT>
 <FILE path="internal/server.go">
 <BEFORE>
 func handle(r *Request) {
     process(r)
 }
 </BEFORE>
+</FILE>
+
+<CODE>
 <AFTER>
 func handle(r *Request) {
     if r == nil {
@@ -173,12 +234,24 @@ func handle(r *Request) {
     process(r)
 }
 </AFTER>
-</FILE>
+</CODE>
+
+<VALIDATE>
+<SYNTAX_OK> true
+<TEST_PASS> true
+</VALIDATE>
+
 <COMMENTS>
 reviewer: Consider checking nil
 author: Thanks, updated
 </COMMENTS>
 ```
+
+**Hierarchical Structure**:
+1. **PLAN**: High-level reasoning (used by planner module)
+2. **CONTEXT**: Existing code (input to both modules)
+3. **CODE**: Implementation (generated by generator module)
+4. **VALIDATE**: Feedback (for recursive refinement)
 
 ## Data Categories
 
@@ -276,34 +349,59 @@ Load in Ollama
 Inference API
 ```
 
-## Training Strategy
+## Training Strategy (HRM/TRM-based)
 
-### Curriculum Learning
+### Hierarchical Recursive Training
 
-**Option A: Single-Stage** (Recommended for POC)
-- Train on mixed corpus (NAT + MIX + CODE) for 10B tokens
-- Simple, fast validation of pipeline
+**Novel Approach**: Instead of traditional autoregressive training, we use a multi-task objective that trains planning and generation jointly with recursive refinement.
 
-**Option B: Multi-Stage** (For production)
-1. **Stage 1**: General technical text (10-30B tokens)
-2. **Stage 2**: Code-heavy pretraining (50-200B tokens)
-3. **Stage 3**: Domain specialization on PRs (10-50B tokens)
+**Phase 1: Joint Hierarchical Training** (Recommended for POC)
+- Train planner and generator modules simultaneously
+- Multi-task loss: 40% planning + 40% code generation + 20% refinement
+- Data: 5000+ repos with hierarchically annotated PRs
+- Expected: 2-3 days on RX 6700 XT (vs 5-7 days for GPT-2)
 
-### Hyperparameters (125M Model)
+**Phase 2: Recursive Refinement Training**
+- Introduce deliberate errors and partial solutions
+- Train model to detect issues and iteratively refine
+- Use validation feedback (syntax errors, test failures) as training signal
+- Learn when to continue vs when solution is complete
+
+**Phase 3: Specialization** (For production)
+1. **Stage 1**: Basic Go patterns (error handling, interfaces) - 1B tokens
+2. **Stage 2**: Complex refactoring and bug fixes - 2B tokens
+3. **Stage 3**: PR-specific reasoning - 1B tokens
+
+**Total Training**: ~4B tokens (vs 10B for standard LLM approach)
+
+### Hyperparameters (HRM 20-30M Model)
 
 ```python
 {
-    "learning_rate": 5e-4,
-    "batch_size": 2,
-    "gradient_accumulation_steps": 8,
-    "effective_batch_size": 16,
-    "max_steps": 195000,  # ~10B tokens
-    "warmup_steps": 2000,
+    # Training config
+    "learning_rate": 3e-4,        # Slightly lower for stability
+    "batch_size": 8,              # 4x larger! (smaller model)
+    "gradient_accumulation_steps": 4,
+    "effective_batch_size": 32,   # 2x larger effective batch
+    "max_steps": 125000,          # ~4B tokens (vs 10B)
+    "warmup_steps": 1000,
     "weight_decay": 0.1,
     "fp16": True,
     "save_steps": 1000,
     "eval_steps": 500,
     "logging_steps": 50,
+
+    # HRM-specific
+    "planner_lr_multiplier": 1.2,  # Planner trains slightly faster
+    "generator_lr_multiplier": 0.8, # Generator more conservative
+    "refinement_warmup": 5000,     # Start refinement training later
+    "max_refinement_iterations": 5,
+    "validation_frequency": 100,   # Run syntax checks every N steps
+
+    # Multi-task loss weights
+    "plan_loss_weight": 0.4,
+    "code_loss_weight": 0.4,
+    "refinement_loss_weight": 0.2,
 }
 ```
 
@@ -418,17 +516,44 @@ Inference API
 
 ## Future Enhancements
 
-1. **Multi-language Support**: Extend to Python, Rust, etc.
-2. **Instruction Tuning**: Add SFT stage for chat format
-3. **Code Execution**: Validate generated code
-4. **RLHF**: Reinforcement learning from human feedback
-5. **Larger Models**: Scale to 1B-7B parameters
-6. **Streaming**: Real-time training data updates
-7. **Fine-tuning**: Task-specific adaptation
+1. **Multi-language Support**: Extend HRM to Python, Rust, etc.
+2. **Deeper Recursion**: Increase refinement iterations with verification
+3. **Code Execution**: Run tests in refinement loop
+4. **Tree-based Search**: Add TRM-style tree search for complex problems
+5. **Larger HRM Models**: Scale to 100M params (still small vs GPT)
+6. **Online Learning**: Real-time updates from new PRs
+7. **Fine-tuning**: Task-specific adaptation (bug fixes vs new features)
+8. **Multi-step Planning**: Extend planner for multi-file changes
+
+## Advantages Over Traditional LLMs
+
+### Size & Efficiency
+- **6x smaller**: 20-30M vs 125M params
+- **3x faster training**: 2-3 days vs 5-7 days
+- **Less data needed**: 4B vs 10B tokens
+- **Fits in 3-4GB VRAM**: vs 10-11GB
+
+### Accuracy & Quality
+- **Recursive refinement**: Catches and fixes errors
+- **Validation-aware**: Built-in syntax/test checking
+- **Hierarchical reasoning**: Plans before implementing
+- **Interpretable**: Can inspect planning steps
+
+### Practical Benefits
+- **Cheaper to train**: Less compute, less time
+- **Easier to experiment**: Fast iteration cycles
+- **More accessible**: Runs on consumer GPUs
+- **Better for code**: Reasoning structure matches coding workflow
 
 ## References
 
+### Internal Documentation
+- [HRM/TRM Integration](HRM_TRM_INTEGRATION.md) - Detailed design of hierarchical recursive architecture
 - [Implementation Plan](IMPLEMENTATION.md) - Detailed implementation guide
 - [POC Guide](POC.md) - Proof of concept walkthrough
 - [Setup Guide](SETUP.md) - Environment setup
 - [Training Guide](TRAINING.md) - Training procedures
+
+### Research Papers
+- [HRM: Hierarchical Reasoning Modules](https://arxiv.org/abs/2506.21734) - Original HRM paper
+- [TRM: Tiny Recursive Model](https://arxiv.org/abs/2510.04871) - Tree-based recursive reasoning
