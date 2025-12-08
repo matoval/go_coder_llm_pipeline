@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 from pathlib import Path
 from tqdm import tqdm
 import argparse
@@ -156,8 +157,23 @@ class HRMTrainer:
             weight_decay=train_config.weight_decay,
         )
 
+        # Learning rate scheduler with warmup
+        def lr_lambda(current_step: int):
+            if current_step < train_config.warmup_steps:
+                # Linear warmup
+                return float(current_step) / float(max(1, train_config.warmup_steps))
+            # Cosine decay after warmup
+            progress = float(current_step - train_config.warmup_steps) / float(
+                max(1, train_config.num_epochs * 100 - train_config.warmup_steps)
+            )
+            import math
+            return max(0.0, 0.5 * (1.0 + math.cos(progress * math.pi)))
+
+        self.scheduler = LambdaLR(self.optimizer, lr_lambda)
+
         # Loss functions
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
+        self.criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding for plan/code
+        self.refinement_criterion = nn.CrossEntropyLoss()  # No ignore_index for refinement
 
         # Metrics
         self.global_step = 0
@@ -181,17 +197,8 @@ class HRMTrainer:
             input_ids = batch['input_ids'].to(self.device)
             attention_mask = batch['attention_mask'].to(self.device)
 
-            # For now, use simple splitting strategy
-            # TODO: Implement proper problem/plan/code splitting based on special tokens
-            seq_len = input_ids.size(1)
-
-            # Split roughly: first 1/3 problem, middle 1/3 plan, last 1/3 code
-            problem_len = seq_len // 3
-            plan_len = seq_len // 3
-
-            problem_ids = input_ids[:, :problem_len]
-            target_plan = input_ids[:, problem_len:problem_len+plan_len]
-            target_code = input_ids[:, problem_len+plan_len:]
+            # Split based on special tokens: <PLAN> and <CODE>
+            problem_ids, target_plan, target_code = self.split_sequence(input_ids)
 
             # Forward pass
             output = self.model(
@@ -233,7 +240,7 @@ class HRMTrainer:
                 torch.tensor(0, dtype=torch.long, device=self.device)
             )
 
-            refinement_loss = self.criterion(
+            refinement_loss = self.refinement_criterion(
                 refinement_logits,
                 refinement_target
             )
@@ -256,6 +263,7 @@ class HRMTrainer:
             )
 
             self.optimizer.step()
+            self.scheduler.step()
 
             # Track metrics
             total_loss += loss.item()
@@ -271,6 +279,7 @@ class HRMTrainer:
                 'plan': f"{plan_loss.item():.4f}",
                 'code': f"{code_loss.item():.4f}",
                 'refine': f"{refinement_loss.item():.4f}",
+                'lr': f"{self.scheduler.get_last_lr()[0]:.2e}",
             })
 
             # Save checkpoint
@@ -286,6 +295,56 @@ class HRMTrainer:
             'refinement_loss': total_refinement_loss / num_batches,
         }
 
+    def split_sequence(self, input_ids: torch.Tensor):
+        """Split input sequence into problem, plan, and code based on special tokens."""
+        plan_token_id = self.model_config.special_tokens['<PLAN>']
+        code_token_id = self.model_config.special_tokens['<CODE>']
+
+        batch_size = input_ids.size(0)
+        problem_ids_list = []
+        target_plan_list = []
+        target_code_list = []
+
+        for i in range(batch_size):
+            seq = input_ids[i]
+
+            # Find where <PLAN> and <CODE> tokens appear
+            plan_positions = (seq == plan_token_id).nonzero(as_tuple=True)[0]
+            code_positions = (seq == code_token_id).nonzero(as_tuple=True)[0]
+
+            # Fallback to 1/3 splitting if tokens not found
+            if len(plan_positions) == 0 or len(code_positions) == 0:
+                seq_len = seq.size(0)
+                problem_len = seq_len // 3
+                plan_len = seq_len // 3
+
+                problem_ids_list.append(seq[:problem_len])
+                target_plan_list.append(seq[problem_len:problem_len+plan_len])
+                target_code_list.append(seq[problem_len+plan_len:])
+            else:
+                # Use first occurrence of each token
+                plan_start = plan_positions[0].item()
+                code_start = code_positions[0].item()
+
+                # Split: problem is before <PLAN>, plan is <PLAN> to <CODE>, code is from <CODE> onward
+                problem_ids_list.append(seq[:plan_start])
+                target_plan_list.append(seq[plan_start:code_start])
+                target_code_list.append(seq[code_start:])
+
+        # Pad sequences to same length within batch
+        def pad_sequences(seqs):
+            max_len = max(s.size(0) for s in seqs)
+            padded = torch.zeros(batch_size, max_len, dtype=torch.long, device=self.device)
+            for i, s in enumerate(seqs):
+                padded[i, :s.size(0)] = s
+            return padded
+
+        problem_ids = pad_sequences(problem_ids_list)
+        target_plan = pad_sequences(target_plan_list)
+        target_code = pad_sequences(target_code_list)
+
+        return problem_ids, target_plan, target_code
+
     @torch.no_grad()
     def validate(self, dataloader: DataLoader) -> Dict[str, float]:
         """Validate model."""
@@ -295,14 +354,8 @@ class HRMTrainer:
         for batch in tqdm(dataloader, desc="Validating"):
             input_ids = batch['input_ids'].to(self.device)
 
-            # Same splitting as training
-            seq_len = input_ids.size(1)
-            problem_len = seq_len // 3
-            plan_len = seq_len // 3
-
-            problem_ids = input_ids[:, :problem_len]
-            target_plan = input_ids[:, problem_len:problem_len+plan_len]
-            target_code = input_ids[:, problem_len+plan_len:]
+            # Split based on special tokens
+            problem_ids, target_plan, target_code = self.split_sequence(input_ids)
 
             # Forward pass
             output = self.model(
@@ -326,7 +379,7 @@ class HRMTrainer:
                 dtype=torch.long,
                 device=self.device
             )
-            refinement_loss = self.criterion(
+            refinement_loss = self.refinement_criterion(
                 output['refinement_logits'],
                 refinement_target
             )
@@ -350,6 +403,7 @@ class HRMTrainer:
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
             'model_config': asdict(self.model_config),
             'train_config': asdict(self.train_config),
         }
@@ -364,6 +418,11 @@ class HRMTrainer:
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # Load scheduler state if available (for backwards compatibility)
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
         self.global_step = checkpoint['global_step']
 
         logger.info(f"Resumed from step {self.global_step}")
