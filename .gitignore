@@ -1,3 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environments
+llm/
+venv/
+env/
+ENV/
+.venv
+
+# Model Checkpoints & Weights (LARGE FILES - DO NOT COMMIT)
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.pb
+
+# Tokenizer Models (can be large)
+*.model
+*.vocab
+tokenizer/*.model
+tokenizer/*.vocab
+
+# Training Data (LARGE FILES - DO NOT COMMIT)
+data/
+!data/.gitkeep
+*.jsonl
+*.json.gz
+*.csv
+*.tsv
+*.parquet
+
+# Logs and Outputs
+logs/
+*.log
+wandb/
+tensorboard/
+runs/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
 # Environment variables
 .env
 .env.*
@@ -50,3 +112,12 @@ id_ed25519
 **/credentials/
 **/*secret*
 **/*credential*
+
+# Compiled Go binaries
+cmd/fetchdata/fetchdata
+cmd/fetchdata/main
+*.exe
+
+# Test artifacts
+coverage.out
+*.test
