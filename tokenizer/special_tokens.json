@@ -1,0 +1,63 @@
+{
+  "standard_tokens": {
+    "<unk>": {
+      "id": 0,
+      "description": "Unknown token"
+    },
+    "<s>": {
+      "id": 1,
+      "description": "Begin-of-sequence"
+    },
+    "</s>": {
+      "id": 2,
+      "description": "End-of-sequence"
+    },
+    "<pad>": {
+      "id": 3,
+      "description": "Padding token"
+    }
+  },
+  "data_structure_tokens": {
+    "<REPO>": "Repository name",
+    "<PR_TITLE>": "Pull request title",
+    "<PR_BODY>": "Pull request description",
+    "<FILE>": "File marker",
+    "<BEFORE>": "Code before change",
+    "<AFTER>": "Code after change",
+    "<COMMENTS>": "Comments section",
+    "<CODE>": "Code block",
+    "<STRUCTURE>": "Repository structure"
+  },
+  "planning_structure_tokens": {
+    "<PLAN>": "Start of planning section",
+    "</PLAN>": "End of planning section",
+    "<STEP>": "Individual planning step"
+  },
+  "intent_tokens": {
+    "<INTENT:FIX>": "Bug fix intent",
+    "<INTENT:ADD>": "Feature addition intent",
+    "<INTENT:REFACTOR>": "Code refactoring intent",
+    "<INTENT:OPTIMIZE>": "Performance optimization",
+    "<INTENT:UPDATE>": "Update existing code",
+    "<INTENT:REMOVE>": "Remove code"
+  },
+  "target_tokens": {
+    "<TARGET:func>": "Target is a function",
+    "<TARGET:type>": "Target is a type/struct",
+    "<TARGET:interface>": "Target is an interface",
+    "<TARGET:method>": "Target is a method",
+    "<TARGET:var>": "Target is a variable"
+  },
+  "validation_tokens": {
+    "<VALIDATE>": "Start validation section",
+    "<SYNTAX_OK>": "Syntax is correct",
+    "<SYNTAX_ERR>": "Syntax error present",
+    "<TEST_PASS>": "Tests pass",
+    "<TEST_FAIL>": "Tests fail",
+    "<REFINE>": "Needs refinement"
+  },
+  "context_tokens": {
+    "<CONTEXT>": "Code context section",
+    "<PROBLEM>": "Problem description"
+  }
+}

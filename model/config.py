@@ -118,13 +118,14 @@ class HRMConfig:
     )
 
     # Special tokens for hierarchical reasoning
+    # NOTE: Must match bos_token_id, eos_token_id, pad_token_id above!
     special_tokens: Dict[str, int] = field(
         default_factory=lambda: {
-            # Base tokens
-            "<pad>": 0,
-            "<unk>": 1,
-            "<s>": 2,
-            "</s>": 3,
+            # Base tokens (MUST match token IDs above)
+            "<pad>": 0,   # Matches pad_token_id
+            "<s>": 1,     # Matches bos_token_id (BEGIN-OF-SEQUENCE)
+            "</s>": 2,    # Matches eos_token_id (END-OF-SEQUENCE)
+            "<unk>": 3,   # Unknown token
             # Structural tokens
             "<REPO>": 4,
             "<PR_TITLE>": 5,
@@ -263,6 +264,9 @@ def get_tiny_config() -> HRMConfig:
         n_layer=2,
         n_head=4,
     )
+    # Match cross_attention_dim to actual embedding size
+    config.cross_attention_dim = 128
+    config.cross_attention_heads = 4
     return config
 
 

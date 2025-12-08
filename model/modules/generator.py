@@ -277,6 +277,7 @@ class GeneratorModule(nn.Module):
         max_new_tokens: int = 100,
         temperature: float = 0.8,
         top_k: int = 40,
+        eos_token_id: int = 2,
     ):
         """
         Generate code tokens autoregressively.
@@ -287,6 +288,7 @@ class GeneratorModule(nn.Module):
             max_new_tokens: How many tokens to generate
             temperature: Sampling temperature
             top_k: Top-k sampling
+            eos_token_id: End-of-sequence token ID (default: 2)
 
         Returns:
             idx: [B, T + max_new_tokens] - Generated sequence
@@ -312,6 +314,10 @@ class GeneratorModule(nn.Module):
 
             # Append
             idx = torch.cat([idx, idx_next], dim=1)
+
+            # Early stopping: check if we generated EOS token
+            if (idx_next == eos_token_id).any():
+                break
 
         return idx
 

@@ -105,6 +105,13 @@ class PlannerModule(nn.Module):
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
 
+        # Check if sequence length exceeds position embeddings
+        if seq_len > self.config.n_positions:
+            raise ValueError(
+                f"Sequence length ({seq_len}) exceeds model's maximum position embeddings ({self.config.n_positions}). "
+                f"Please reduce sequence length or increase n_positions in config."
+            )
+
         # Generate position IDs if not provided
         if position_ids is None:
             position_ids = torch.arange(0, seq_len, dtype=torch.long, device=device)
@@ -117,16 +124,19 @@ class PlannerModule(nn.Module):
         hidden_states = self.dropout(hidden_states)
 
         # Convert attention mask to transformer format
-        # PyTorch transformer expects: 0=attend, -inf=ignore (opposite of HF)
+        # PyTorch TransformerEncoder expects src_key_padding_mask to be a boolean tensor
+        # where True means "ignore this position" (opposite of HuggingFace convention)
+        padding_mask = None
         if attention_mask is not None:
-            # Convert from [batch, seq] to [batch, seq] with -inf for masked
-            attention_mask = (1.0 - attention_mask) * -1e9
+            # Convert from [batch, seq] with 1=attend, 0=ignore
+            # to [batch, seq] with True=ignore, False=attend
+            padding_mask = (attention_mask == 0)
 
         # Transformer encoding
         hidden_states = self.transformer(
             hidden_states,
             mask=None,  # Causal mask not needed for encoder
-            src_key_padding_mask=attention_mask,
+            src_key_padding_mask=padding_mask,
         )
 
         # Layer norm
@@ -143,6 +153,7 @@ class PlannerModule(nn.Module):
         max_new_tokens: int = 50,
         temperature: float = 0.8,
         top_k: int = 40,
+        eos_token_id: int = 2,
     ):
         """
         Generate plan tokens autoregressively.
@@ -152,6 +163,7 @@ class PlannerModule(nn.Module):
             max_new_tokens: Maximum plan tokens to generate
             temperature: Sampling temperature
             top_k: Top-k sampling
+            eos_token_id: End-of-sequence token ID (default: 2)
 
         Returns:
             plan_tokens: [batch_size, seq_len + max_new_tokens] - Generated plan
@@ -177,8 +189,10 @@ class PlannerModule(nn.Module):
             # Append to sequence
             input_ids = torch.cat([input_ids, next_token], dim=1)
 
-            # Stop if we generated </PLAN> token (you'd check this properly)
-            # For now, just continue
+            # Early stopping: check if we generated EOS token (</PLAN> or </s>)
+            # Note: </PLAN> token would be ID 10 based on config, EOS is 2
+            if (next_token == eos_token_id).any() or (next_token == 10).any():
+                break
 
         return input_ids
 
