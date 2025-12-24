@@ -65,24 +65,82 @@ export GITHUB_TOKEN=your_token_here
 
 ### Running the Pipeline
 
+**Automated (Recommended)**:
 ```bash
 # 1. Collect data from GitHub repositories
 ./bin/fetchdata
 
-# 2. Train tokenizer
-cd tokenizer
-./train_tokenizer.sh
+# 2. Run the complete pipeline (processing → tokenizer → ready for training)
+./scripts/run_all.sh
 
-# 3. Train model
-cd ../model
-python train.py
+# 3. Prepare tokenized training data
+source llm/bin/activate
+python scripts/prepare_training_data.py
 
-# 4. Export to GGUF for inference
-python export_gguf.py
+# 4. Train model
+python model/train.py
 
-# 5. Run with Ollama
+# 5. Export to GGUF for inference
+python model/export_gguf.py
+
+# 6. Run with Ollama
 ollama create golang-llm -f Modelfile
 ollama run golang-llm
+```
+
+**Manual Steps** (if you prefer control):
+```bash
+# 1. Collect data
+./bin/fetchdata
+
+# 2. Process raw data to hierarchical format
+source llm/bin/activate
+python scripts/process_data.py hierarchical \
+  --input data/raw \
+  --output data/processed
+
+# 3. Create training corpus
+python scripts/process_data.py corpus \
+  --input data/processed \
+  --output data/corpus
+
+# 4. Train tokenizer
+cd tokenizer
+python train_tokenizer.py
+cd ..
+
+# 5. Prepare tokenized training data
+python scripts/prepare_training_data.py
+
+# 6. Train model
+python model/train.py
+```
+
+### Pipeline Results (Example Run)
+
+From a successful pipeline run with real data:
+
+```
+Data Collection:
+  - Repositories: 3,022 Go projects
+  - Pull Requests: 126,842 records
+  - Raw data: ~1.5 GB JSONL files
+
+Processing:
+  - Hierarchical format: 126,842 records processed
+  - Training corpus: 512 MB (6.5M lines)
+  - Processing time: ~30 minutes
+
+Tokenizer:
+  - Vocabulary size: 50,000 tokens
+  - Special tokens: 31 HRM/TRM tokens
+  - Model size: 0.97 MB
+  - Training time: ~5 minutes
+
+Training Data:
+  - Train set: 114,158 records (90%)
+  - Validation set: 12,684 records (10%)
+  - Max sequence length: 512 tokens
 ```
 
 ## Project Structure
@@ -96,16 +154,27 @@ go_coder_llm_pipeline/
 │   ├── tokenizer/          # Corpus preparation utilities
 │   └── types/              # Shared type definitions
 ├── model/
-│   ├── train.py            # PyTorch training script
+│   ├── train.py            # PyTorch training script with HRM/TRM
+│   ├── hrm_model.py        # Hierarchical Reasoning Module implementation
 │   ├── config.py           # Model configuration
 │   └── export_gguf.py      # GGUF export utility
 ├── tokenizer/
-│   ├── train_tokenizer.sh  # SentencePiece training script
-│   ├── go_coder_llm.model  # Trained tokenizer model
+│   ├── train_tokenizer.py  # SentencePiece training script (Python)
+│   ├── train_tokenizer.sh  # Legacy shell wrapper
+│   ├── plan_extractor.py   # Extract hierarchical plans from PRs
+│   ├── tokenizer.py        # Tokenizer wrapper class
+│   ├── go_coder_llm.model  # Trained tokenizer model (50K vocab)
 │   └── go_coder_llm.vocab  # Vocabulary file
 ├── scripts/
-│   ├── run_all.sh          # End-to-end pipeline runner
+│   ├── run_all.sh          # End-to-end pipeline automation
+│   ├── process_data.py     # Process raw → hierarchical → corpus
+│   ├── prepare_training_data.py  # Tokenize and create train/val split
 │   └── evaluate.py         # Model evaluation utilities
+├── data/                   # Data directory (created during pipeline)
+│   ├── raw/                # Raw GitHub PR data (JSONL)
+│   ├── processed/          # Hierarchical format (JSONL)
+│   ├── corpus/             # Training corpus (text)
+│   └── tokenized/          # Tokenized train/val sets (JSONL)
 └── docs/                   # Documentation
 ```
 
