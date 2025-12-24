@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 import argparse
+import glob
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -146,7 +147,8 @@ class DataPipeline:
     def create_training_corpus(
         self,
         input_path: str,
-        output_path: str
+        output_path: str,
+        append: bool = False
     ) -> int:
         """
         Create text corpus for tokenizer training.
@@ -154,13 +156,15 @@ class DataPipeline:
         Args:
             input_path: Path to hierarchical JSONL file
             output_path: Path for text corpus output
+            append: Whether to append to existing file
 
         Returns:
             Number of records processed
         """
         count = 0
+        mode = 'a' if append else 'w'
 
-        with open(input_path, 'r') as fin, open(output_path, 'w') as fout:
+        with open(input_path, 'r') as fin, open(output_path, mode) as fout:
             for line in fin:
                 try:
                     record = json.loads(line)
@@ -235,6 +239,96 @@ class DataPipeline:
         return count
 
 
+def process_directory(pipeline, command, input_dir, output_dir, args):
+    """
+    Process all JSONL files in a directory.
+
+    Args:
+        pipeline: DataPipeline instance
+        command: Command to run (hierarchical, corpus, tokenize)
+        input_dir: Input directory path
+        output_dir: Output directory path
+        args: Command line arguments
+
+    Returns:
+        Total number of records processed
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Find all JSONL files
+    jsonl_files = sorted(input_path.glob("*.jsonl"))
+
+    if not jsonl_files:
+        print(f"No JSONL files found in {input_dir}")
+        return 0
+
+    print(f"Found {len(jsonl_files)} files to process")
+    print()
+
+    total_count = 0
+    success_count = 0
+    error_count = 0
+
+    for i, input_file in enumerate(jsonl_files, 1):
+        basename = input_file.stem
+
+        print(f"[{i}/{len(jsonl_files)}] Processing {basename}...")
+
+        try:
+            if command == "hierarchical":
+                output_file = output_path / f"{basename}_hierarchical.jsonl"
+                count = pipeline.process_to_hierarchical(
+                    str(input_file),
+                    str(output_file)
+                )
+                success_count += 1
+                total_count += count
+                print(f"  ✓ Processed {count} records -> {output_file.name}")
+
+            elif command == "corpus":
+                # For corpus, append all to a single file
+                output_file = output_path / "training_corpus.txt"
+                append = i > 1  # Append for all files after the first
+                count = pipeline.create_training_corpus(
+                    str(input_file),
+                    str(output_file),
+                    append=append
+                )
+                success_count += 1
+                total_count += count
+                print(f"  ✓ Added {count} records to corpus")
+
+            elif command == "tokenize":
+                output_file = output_path / f"{basename}_tokenized.jsonl"
+                count = pipeline.tokenize_dataset(
+                    str(input_file),
+                    str(output_file),
+                    args.max_length
+                )
+                success_count += 1
+                total_count += count
+                print(f"  ✓ Tokenized {count} records -> {output_file.name}")
+
+        except Exception as e:
+            error_count += 1
+            print(f"  ✗ Error: {e}")
+
+        print()
+
+    print("=" * 60)
+    print(f"Processing complete!")
+    print(f"  Success: {success_count}/{len(jsonl_files)} files")
+    print(f"  Errors: {error_count}/{len(jsonl_files)} files")
+    print(f"  Total records: {total_count}")
+    print("=" * 60)
+
+    return total_count
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -271,44 +365,51 @@ def main():
     # Initialize pipeline
     pipeline = DataPipeline(tokenizer_path=args.tokenizer)
 
-    # Process based on command
-    if args.command == "hierarchical":
-        print(f"Converting to hierarchical format...")
-        print(f"  Input: {args.input}")
-        print(f"  Output: {args.output}")
+    # Check if input is a directory
+    input_path = Path(args.input)
 
-        count = pipeline.process_to_hierarchical(args.input, args.output)
-        print(f"\nProcessed {count} records")
+    if input_path.is_dir():
+        # Process directory
+        print(f"Processing directory: {args.input}")
+        print(f"Output directory: {args.output}")
+        print()
 
-    elif args.command == "corpus":
-        print(f"Creating training corpus...")
-        print(f"  Input: {args.input}")
-        print(f"  Output: {args.output}")
+        count = process_directory(pipeline, args.command, args.input, args.output, args)
 
-        count = pipeline.create_training_corpus(args.input, args.output)
-        print(f"\nCreated corpus from {count} records")
+    else:
+        # Process single file
+        print(f"Processing single file: {args.input}")
+        print(f"Output: {args.output}")
+        print()
 
-    elif args.command == "tokenize":
-        if not args.tokenizer:
-            print("Error: --tokenizer required for tokenize command")
-            sys.exit(1)
+        # Ensure output directory exists
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if not Path(args.tokenizer).exists():
-            print(f"Error: Tokenizer not found at {args.tokenizer}")
-            sys.exit(1)
+        # Process based on command
+        if args.command == "hierarchical":
+            count = pipeline.process_to_hierarchical(args.input, args.output)
+            print(f"\nProcessed {count} records")
 
-        print(f"Tokenizing dataset...")
-        print(f"  Input: {args.input}")
-        print(f"  Output: {args.output}")
-        print(f"  Tokenizer: {args.tokenizer}")
-        print(f"  Max length: {args.max_length}")
+        elif args.command == "corpus":
+            count = pipeline.create_training_corpus(args.input, args.output)
+            print(f"\nCreated corpus from {count} records")
 
-        count = pipeline.tokenize_dataset(
-            args.input,
-            args.output,
-            args.max_length
-        )
-        print(f"\nTokenized {count} records")
+        elif args.command == "tokenize":
+            if not args.tokenizer:
+                print("Error: --tokenizer required for tokenize command")
+                sys.exit(1)
+
+            if not Path(args.tokenizer).exists():
+                print(f"Error: Tokenizer not found at {args.tokenizer}")
+                sys.exit(1)
+
+            count = pipeline.tokenize_dataset(
+                args.input,
+                args.output,
+                args.max_length
+            )
+            print(f"\nTokenized {count} records")
 
 
 if __name__ == "__main__":

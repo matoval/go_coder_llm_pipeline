@@ -254,7 +254,7 @@ class PlanExtractor:
         plan = self.extract_plan(
             record["pull_request"]["title"],
             record["pull_request"].get("body", ""),
-            record.get("files", [])
+            record.get("files") or []
         )
 
         # Get first file for context (simplified)
