@@ -72,16 +72,18 @@ class TrainingConfig:
 class HierarchicalDataset(Dataset):
     """Dataset for hierarchical training data."""
 
-    def __init__(self, data_path: str, max_length: int = 1024):
+    def __init__(self, data_path: str, max_length: int = 1024, pad_token_id: int = 3):
         """
         Initialize dataset.
 
         Args:
             data_path: Path to tokenized JSONL file
             max_length: Maximum sequence length
+            pad_token_id: Token ID to use for padding (default 3)
         """
         self.data_path = data_path
         self.max_length = max_length
+        self.pad_token_id = pad_token_id
         self.samples = []
 
         # Load data
@@ -113,7 +115,7 @@ class HierarchicalDataset(Dataset):
         # Pad or truncate
         if len(input_ids) < self.max_length:
             padding = self.max_length - len(input_ids)
-            input_ids = input_ids + [0] * padding  # 0 is pad token
+            input_ids = input_ids + [self.pad_token_id] * padding
             attention_mask = attention_mask + [0] * padding
         else:
             input_ids = input_ids[:self.max_length]
@@ -172,7 +174,8 @@ class HRMTrainer:
         self.scheduler = LambdaLR(self.optimizer, lr_lambda)
 
         # Loss functions
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding for plan/code
+        # FIXED: Use model_config.pad_token_id (3) instead of hardcoded 0
+        self.criterion = nn.CrossEntropyLoss(ignore_index=model_config.pad_token_id)  # Ignore padding for plan/code
         self.refinement_criterion = nn.CrossEntropyLoss()  # No ignore_index for refinement
 
         # Metrics
@@ -214,6 +217,9 @@ class HRMTrainer:
                 plan_logits.reshape(-1, self.model_config.vocab_size),
                 target_plan.reshape(-1)
             )
+            # Handle NaN (occurs when all tokens in batch are padding)
+            if torch.isnan(plan_loss):
+                plan_loss = torch.tensor(0.0, device=self.device)
 
             # Code loss
             code_logits = output['code_logits']
@@ -221,6 +227,9 @@ class HRMTrainer:
                 code_logits.reshape(-1, self.model_config.vocab_size),
                 target_code.reshape(-1)
             )
+            # Handle NaN (occurs when all tokens in batch are padding)
+            if torch.isnan(code_loss):
+                code_loss = torch.tensor(0.0, device=self.device)
 
             # Refinement loss
             # TODO: Integrate GoSyntaxValidator to provide real validation feedback
@@ -334,7 +343,8 @@ class HRMTrainer:
         # Pad sequences to same length within batch
         def pad_sequences(seqs):
             max_len = max(s.size(0) for s in seqs)
-            padded = torch.zeros(batch_size, max_len, dtype=torch.long, device=self.device)
+            # FIXED: Use pad_token_id (3) instead of 0
+            padded = torch.full((batch_size, max_len), self.model_config.pad_token_id, dtype=torch.long, device=self.device)
             for i, s in enumerate(seqs):
                 padded[i, :s.size(0)] = s
             return padded
@@ -369,10 +379,17 @@ class HRMTrainer:
                 output['plan_logits'].reshape(-1, self.model_config.vocab_size),
                 target_plan.reshape(-1)
             )
+            # Handle NaN (occurs when all tokens in batch are padding)
+            if torch.isnan(plan_loss):
+                plan_loss = torch.tensor(0.0, device=self.device)
+
             code_loss = self.criterion(
                 output['code_logits'].reshape(-1, self.model_config.vocab_size),
                 target_code.reshape(-1)
             )
+            # Handle NaN (occurs when all tokens in batch are padding)
+            if torch.isnan(code_loss):
+                code_loss = torch.tensor(0.0, device=self.device)
 
             refinement_target = torch.zeros(
                 output['refinement_logits'].size(0),
@@ -484,13 +501,15 @@ def main():
 
     train_dataset = HierarchicalDataset(
         train_config.train_data_path,
-        max_length=max_seq_length
+        max_length=max_seq_length,
+        pad_token_id=model_config.pad_token_id
     )
 
     if Path(train_config.val_data_path).exists():
         val_dataset = HierarchicalDataset(
             train_config.val_data_path,
-            max_length=max_seq_length
+            max_length=max_seq_length,
+            pad_token_id=model_config.pad_token_id
         )
     else:
         logger.warning("No validation data found, skipping validation")

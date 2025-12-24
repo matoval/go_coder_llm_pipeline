@@ -49,7 +49,7 @@ class HRMConfig:
     vocab_size: int = 50000
     bos_token_id: int = 1  # <s>
     eos_token_id: int = 2  # </s>
-    pad_token_id: int = 0  # <pad>
+    pad_token_id: int = 3  # <pad> - FIXED: was 0, actual tokenizer uses 3
 
     # Planning Module Configuration (High-level reasoning)
     planner_config: ModuleConfig = field(
@@ -118,44 +118,46 @@ class HRMConfig:
     )
 
     # Special tokens for hierarchical reasoning
-    # NOTE: Must match bos_token_id, eos_token_id, pad_token_id above!
+    # FIXED: These now match the actual tokenizer token IDs from go_coder_llm.model
     special_tokens: Dict[str, int] = field(
         default_factory=lambda: {
             # Base tokens (MUST match token IDs above)
-            "<pad>": 0,   # Matches pad_token_id
+            "<unk>": 0,   # Unknown token
             "<s>": 1,     # Matches bos_token_id (BEGIN-OF-SEQUENCE)
             "</s>": 2,    # Matches eos_token_id (END-OF-SEQUENCE)
-            "<unk>": 3,   # Unknown token
+            "<pad>": 3,   # Matches pad_token_id
             # Structural tokens
             "<REPO>": 4,
             "<PR_TITLE>": 5,
             "<PR_BODY>": 6,
-            "<CONTEXT>": 7,
-            "<CODE>": 8,
-            # Planning tokens (NEW for HRM)
-            "<PLAN>": 9,
-            "</PLAN>": 10,
-            "<STEP>": 11,
+            "<FILE>": 7,
+            "<BEFORE>": 8,
+            "<AFTER>": 9,
+            # Code and Planning tokens (CRITICAL for training)
+            "<CODE>": 11,
+            "<PLAN>": 13,
+            "</PLAN>": 14,
+            "<STEP>": 15,
             # Intent tokens
-            "<INTENT:FIX>": 12,
-            "<INTENT:ADD>": 13,
-            "<INTENT:REFACTOR>": 14,
-            "<INTENT:OPTIMIZE>": 15,
-            "<INTENT:UPDATE>": 16,
-            "<INTENT:REMOVE>": 17,
+            "<INTENT:FIX>": 16,
+            "<INTENT:ADD>": 17,
+            "<INTENT:REFACTOR>": 18,
+            "<INTENT:OPTIMIZE>": 19,
+            "<INTENT:UPDATE>": 20,
+            "<INTENT:REMOVE>": 21,
             # Target tokens
-            "<TARGET:func>": 18,
-            "<TARGET:type>": 19,
-            "<TARGET:interface>": 20,
-            "<TARGET:method>": 21,
-            "<TARGET:var>": 22,
+            "<TARGET:func>": 22,
+            "<TARGET:type>": 23,
+            "<TARGET:interface>": 24,
+            "<TARGET:method>": 25,
+            "<TARGET:var>": 26,
             # Validation tokens
-            "<VALIDATE>": 23,
-            "<SYNTAX_OK>": 24,
-            "<SYNTAX_ERR>": 25,
-            "<TEST_PASS>": 26,
-            "<TEST_FAIL>": 27,
-            "<REFINE>": 28,
+            "<VALIDATE>": 27,
+            "<SYNTAX_OK>": 28,
+            "<TEST_PASS>": 30,
+            # Context tokens
+            "<CONTEXT>": 33,
+            "<PROBLEM>": 34,
         }
     )
 
