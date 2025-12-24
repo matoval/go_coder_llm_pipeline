@@ -96,10 +96,16 @@ class HierarchicalGoCoderModel(nn.Module):
             planner_input = problem_ids
 
         # 1. Planning phase
-        plan_logits, plan_hidden = self.planner(planner_input)
+        # For training with teacher forcing, use target_plan if provided
+        if target_plan is not None:
+            # Teacher forcing: use target plan to get plan representations
+            plan_logits, plan_hidden = self.planner(target_plan)
+        else:
+            # Inference: predict plan from problem
+            plan_logits, plan_hidden = self.planner(planner_input)
 
         # 2. Code generation phase (conditioned on plan)
-        # For training, use target_plan if provided, else use predicted plan
+        # For training, use target_code with teacher forcing
         if target_code is not None:
             # Teacher forcing for code generation
             code_logits = self.generator(target_code, plan_hidden)

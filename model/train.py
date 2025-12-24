@@ -44,12 +44,14 @@ class TrainingConfig:
     val_data_path: str = "data/tokenized/val.jsonl"
 
     # Training
-    batch_size: int = 16
+    batch_size: int = 4  # Reduced from 16 to fit in 12GB GPU
+    gradient_accumulation_steps: int = 4  # Accumulate to effective batch size of 16
     num_epochs: int = 10
     learning_rate: float = 3e-4
     weight_decay: float = 0.01
     warmup_steps: int = 1000
     max_grad_norm: float = 1.0
+    gradient_checkpointing: bool = True  # Enable to save memory during backward pass
 
     # Loss weights
     plan_loss_weight: float = 0.4
@@ -151,6 +153,14 @@ class HRMTrainer:
         # Move model to device
         self.device = torch.device(train_config.device)
         self.model.to(self.device)
+
+        # Enable gradient checkpointing if requested (saves memory during backward pass)
+        if train_config.gradient_checkpointing:
+            if hasattr(self.model.planner, 'gradient_checkpointing_enable'):
+                self.model.planner.gradient_checkpointing_enable()
+            if hasattr(self.model.generator, 'gradient_checkpointing_enable'):
+                self.model.generator.gradient_checkpointing_enable()
+            logger.info("Gradient checkpointing enabled")
 
         # Optimizer
         self.optimizer = AdamW(
@@ -261,26 +271,31 @@ class HRMTrainer:
                 self.train_config.refinement_loss_weight * refinement_loss
             )
 
-            # Backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
-
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                self.train_config.max_grad_norm
-            )
-
-            self.optimizer.step()
-            self.scheduler.step()
-
-            # Track metrics
+            # Track metrics (before scaling for gradient accumulation)
             total_loss += loss.item()
             total_plan_loss += plan_loss.item()
             total_code_loss += code_loss.item()
             total_refinement_loss += refinement_loss.item()
 
-            self.global_step += 1
+            # Scale loss for gradient accumulation
+            scaled_loss = loss / self.train_config.gradient_accumulation_steps
+
+            # Backward pass
+            scaled_loss.backward()
+
+            # Only update weights every gradient_accumulation_steps
+            if (batch_idx + 1) % self.train_config.gradient_accumulation_steps == 0:
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.train_config.max_grad_norm
+                )
+
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad()
+
+                self.global_step += 1
 
             # Update progress bar
             pbar.set_postfix({
@@ -452,7 +467,7 @@ def main():
     parser.add_argument('--train-data', type=str, default='data/tokenized/train.jsonl')
     parser.add_argument('--val-data', type=str, default='data/tokenized/val.jsonl')
     parser.add_argument('--output-dir', type=str, default='checkpoints')
-    parser.add_argument('--batch-size', type=int, default=16)
+    parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--resume', type=str, help='Resume from checkpoint')
