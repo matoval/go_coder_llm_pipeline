@@ -265,13 +265,24 @@ class PlanExtractor:
             first_file = record["files"][0]
             context = {
                 "file": first_file["filename"],
-                "before": first_file.get("before", "")
+                "before": first_file.get("content_before", "")
             }
+
+            # Get validation signals from collected data
+            syntax_valid = first_file.get("valid_syntax", True)
+            pr_data = record.get("pull_request", {})
+            ci_status = pr_data.get("ci_status", "unknown")
+
+            # Infer test status from CI status
+            tests_passed = ci_status == "success"
+            if ci_status == "unknown" or ci_status == "none":
+                tests_passed = True  # Assume passed if no CI info
+
             solution = {
-                "code": first_file.get("after", ""),
+                "code": first_file.get("content_after", ""),
                 "validation": {
-                    "syntax": True,  # Assume valid (will be checked during training)
-                    "tests": True    # Assume valid
+                    "syntax": syntax_valid,
+                    "tests": tests_passed
                 }
             }
 

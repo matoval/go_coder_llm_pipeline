@@ -241,22 +241,19 @@ class HRMTrainer:
             if torch.isnan(code_loss):
                 code_loss = torch.tensor(0.0, device=self.device)
 
-            # Refinement loss
-            # TODO: Integrate GoSyntaxValidator to provide real validation feedback
-            # For now, use a simple heuristic: assume DONE (target=2) for complete sequences
+            # Refinement loss - use validation feedback from data
             refinement_logits = output['refinement_logits']
 
-            # Improved heuristic: check if sequence looks complete
-            # If target_code contains EOS token, assume DONE (2), otherwise CONTINUE (0)
-            eos_token_id = self.model_config.eos_token_id
-            has_eos = (target_code == eos_token_id).any(dim=1)
+            # Extract validation signals from input sequence
+            # Format: <SYNTAX_OK> true/false <TEST_PASS> true/false
+            syntax_ok_token_id = self.model_config.special_tokens.get('<SYNTAX_OK>', 28)
+            test_pass_token_id = self.model_config.special_tokens.get('<TEST_PASS>', 30)
 
-            # Decision: DONE (2) if has EOS, otherwise CONTINUE (0)
-            # (REFINE=1 would require more sophisticated logic with validation)
-            refinement_target = torch.where(
-                has_eos,
-                torch.tensor(2, dtype=torch.long, device=self.device),
-                torch.tensor(0, dtype=torch.long, device=self.device)
+            # Find validation tokens in the batch
+            refinement_target = self._extract_refinement_targets(
+                batch['input_ids'],
+                syntax_ok_token_id,
+                test_pass_token_id
             )
 
             refinement_loss = self.refinement_criterion(
@@ -369,6 +366,45 @@ class HRMTrainer:
         target_code = pad_sequences(target_code_list)
 
         return problem_ids, target_plan, target_code
+
+    def _extract_refinement_targets(
+        self,
+        input_ids: torch.Tensor,
+        syntax_ok_token_id: int,
+        test_pass_token_id: int
+    ) -> torch.Tensor:
+        """
+        Extract refinement targets from validation tokens in the sequence.
+
+        Returns:
+            Tensor of shape (batch_size,) with values:
+            - 0 (CONTINUE): No validation info found
+            - 1 (REFINE): Validation failed (would need <SYNTAX_ERR> or <TEST_FAIL> tokens)
+            - 2 (DONE): Validation passed (both <SYNTAX_OK> and <TEST_PASS> found)
+
+        Note: This is a simplified version. Full implementation would parse
+        the actual true/false values after the validation tokens.
+        """
+        batch_size = input_ids.size(0)
+        refinement_targets = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+
+        for i in range(batch_size):
+            seq = input_ids[i]
+
+            # Check if validation tokens exist
+            has_syntax_ok = (seq == syntax_ok_token_id).any()
+            has_test_pass = (seq == test_pass_token_id).any()
+
+            # Simple heuristic:
+            # - If both validation tokens present, assume tests passed → DONE (2)
+            # - Otherwise, no validation info → CONTINUE (0)
+            # TODO: Parse actual true/false values for more accuracy
+            if has_syntax_ok and has_test_pass:
+                refinement_targets[i] = 2  # DONE
+            else:
+                refinement_targets[i] = 0  # CONTINUE
+
+        return refinement_targets
 
     @torch.no_grad()
     def validate(self, dataloader: DataLoader) -> Dict[str, float]:
